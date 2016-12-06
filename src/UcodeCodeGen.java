@@ -6,14 +6,17 @@ import org.antlr.v4.runtime.tree.ParseTree;
 import org.antlr.v4.runtime.tree.ParseTreeWalker;
 
 import java.io.BufferedWriter;
-import java.io.File;
-import java.io.FileWriter;
 import java.nio.file.Files;
 import java.nio.file.Paths;
 
 public class UcodeCodeGen {
     public static void main(String[] args) throws Exception {
-        MiniCLexer lexer = new MiniCLexer( new ANTLRFileStream(args[0]) );
+        String mcFile;
+        if(args.length == 0)
+            mcFile = "test.c";
+        else
+            mcFile = args[0];
+        MiniCLexer lexer = new MiniCLexer( new ANTLRFileStream(mcFile) );
         CommonTokenStream tokens = new CommonTokenStream( lexer );
         MiniCParser parser = new MiniCParser( tokens );
         ParseTree tree = parser.program();
