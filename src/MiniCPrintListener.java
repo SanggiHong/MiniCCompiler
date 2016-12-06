@@ -5,8 +5,6 @@ import org.antlr.v4.runtime.ParserRuleContext;
 import org.antlr.v4.runtime.tree.ErrorNode;
 import org.antlr.v4.runtime.tree.ParseTreeProperty;
 import org.antlr.v4.runtime.tree.TerminalNode;
-
-import javax.xml.bind.SchemaOutputResolver;
 import java.util.LinkedHashMap;
 import java.util.Map;
 
@@ -114,7 +112,7 @@ public class MiniCPrintListener extends MiniCBaseListener {
         for( Variable var : varTable[1].values() )
             uCode.append( String.format(INDENT_FORMAT + "sym %d %d %d\n", "", var.base, var.offset, var.size) );
         uCode.append( additionalAssignment[1].toString() )
-                .append(statement);
+                .append( statement );
 
         if (isReturnCalled)
             uCode.append( String.format(INDENT_FORMAT + "end\n", "") );
