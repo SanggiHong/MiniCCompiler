@@ -8,7 +8,9 @@ import org.antlr.v4.runtime.tree.TerminalNode;
 import java.util.LinkedHashMap;
 import java.util.Map;
 
-public class MiniCPrintListener extends MiniCBaseListener {
+public class UcodeGenListener extends MiniCBaseListener {
+    public String completeUCode;
+
     ParseTreeProperty<String> codeSet = new ParseTreeProperty<>();
     Map<String, Variable>[] varTable = new LinkedHashMap[2];
     StringBuilder[] additionalAssignment = new StringBuilder[2];
@@ -21,6 +23,10 @@ public class MiniCPrintListener extends MiniCBaseListener {
     static int whileLabelNumber = 1;
     static boolean isReturnCalled = false;
 
+    public String getUCode() {
+        return completeUCode;
+    }
+
     @Override
     public void enterProgram(MiniCParser.ProgramContext ctx) {
         super.enterProgram(ctx);
@@ -31,18 +37,22 @@ public class MiniCPrintListener extends MiniCBaseListener {
     @Override
     public void exitProgram(MiniCParser.ProgramContext ctx) {
         super.exitProgram(ctx);
-        System.out.print( String.format(INDENT_FORMAT + "sym 1 1 1\n", "") );
+        StringBuilder uCode = new StringBuilder();
+        uCode.append( String.format(INDENT_FORMAT + "sym 1 1 1\n", "") );
         for( Variable var : varTable[0].values() )
-            System.out.print( String.format(INDENT_FORMAT + "sym %d %d %d\n", "", var.base, var.offset, var.size) );
+            uCode.append( String.format(INDENT_FORMAT + "sym %d %d %d\n", "", var.base, var.offset, var.size) );
         for ( MiniCParser.DeclContext declChild : ctx.decl() ) {
-            System.out.print( codeSet.get(declChild) );
+            uCode.append( codeSet.get(declChild) );
         }
         maxGlobalOffset--;
-        System.out.print( String.format(INDENT_FORMAT + "bgn %d\n", "", maxGlobalOffset) );
-        System.out.print( additionalAssignment[0].toString() );
-        System.out.print( String.format(INDENT_FORMAT + "ldp\n", "") );
-        System.out.print( String.format(INDENT_FORMAT + "call main\n", "") );
-        System.out.print( String.format(INDENT_FORMAT + "end\n", "") );
+        uCode.append( String.format(INDENT_FORMAT + "bgn %d\n", "", maxGlobalOffset) );
+        uCode.append( additionalAssignment[0].toString() );
+        uCode.append( String.format(INDENT_FORMAT + "ldp\n", "") );
+        uCode.append( String.format(INDENT_FORMAT + "call main\n", "") );
+        uCode.append( String.format(INDENT_FORMAT + "end\n", "") );
+
+        completeUCode = uCode.toString();
+        System.out.println(completeUCode);
     }
 
     @Override
@@ -220,9 +230,8 @@ public class MiniCPrintListener extends MiniCBaseListener {
         super.exitCompound_stmt(ctx);
         StringBuilder uCode = new StringBuilder();
 
-        for ( MiniCParser.StmtContext stmtChild : ctx.stmt() ) {
+        for ( MiniCParser.StmtContext stmtChild : ctx.stmt() )
             uCode.append( codeSet.get(stmtChild) );
-        }
 
         codeSet.put(ctx, uCode.toString());
     }
@@ -517,9 +526,8 @@ public class MiniCPrintListener extends MiniCBaseListener {
         super.exitArgs(ctx);
         StringBuilder uCode = new StringBuilder();
 
-        for ( MiniCParser.ExprContext exprChild : ctx.expr() ) {
+        for ( MiniCParser.ExprContext exprChild : ctx.expr() )
             uCode.append( codeSet.get(exprChild) );
-        }
 
         codeSet.put(ctx, uCode.toString());
     }
