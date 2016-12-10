@@ -8,22 +8,23 @@ import org.antlr.v4.runtime.tree.TerminalNode;
 import java.util.LinkedHashMap;
 import java.util.Map;
 
+
 public class UcodeGenListener extends MiniCBaseListener {
-    public String completeUCode;
+    private ParseTreeProperty<String> codeSet = new ParseTreeProperty<>();
+    @SuppressWarnings("unchecked")
+    private Map<String, Variable>[] varTable = new LinkedHashMap[2];
+    private StringBuilder[] additionalAssignment = new StringBuilder[2];
+    private static final int INDENT = 11;
+    private static final String INDENT_FORMAT = "%-"+INDENT+"s";
+    private static int maxGlobalOffset = 2;
+    private static int currentBase = 1;
+    private static int currentOffset = 2; // sym 1 1 은 쓰레기값 저장을 위한 공간(스택포인터를 조작하는 명령어가 없다)
+    private static int ifLabelNumber = 1;
+    private static int whileLabelNumber = 1;
+    private static boolean isReturnCalled = false;
+    private String completeUCode;
 
-    ParseTreeProperty<String> codeSet = new ParseTreeProperty<>();
-    Map<String, Variable>[] varTable = new LinkedHashMap[2];
-    StringBuilder[] additionalAssignment = new StringBuilder[2];
-    static final int INDENT = 11;
-    static final String INDENT_FORMAT = "%-"+INDENT+"s";
-    static int maxGlobalOffset = 2;
-    static int currentBase = 1;
-    static int currentOffset = 2; // sym 1 1 은 쓰레기값 저장을 위한 공간(스택포인터를 조작하는 명령어가 없다)
-    static int ifLabelNumber = 1;
-    static int whileLabelNumber = 1;
-    static boolean isReturnCalled = false;
-
-    public String getUCode() {
+    protected String getUCode() {
         return completeUCode;
     }
 
@@ -31,7 +32,7 @@ public class UcodeGenListener extends MiniCBaseListener {
     public void enterProgram(MiniCParser.ProgramContext ctx) {
         super.enterProgram(ctx);
         additionalAssignment[0] = new StringBuilder();
-        varTable[0] = new LinkedHashMap();
+        varTable[0] = new LinkedHashMap<>();
     }
 
     @Override
@@ -66,9 +67,9 @@ public class UcodeGenListener extends MiniCBaseListener {
         codeSet.put(ctx, codeSet.get(ctx.getChild(0)));
     }
 
-    boolean isAssignmentIncluded(MiniCParser.Var_declContext ctx) { return ctx.getChildCount() == 5; }
+    private boolean isAssignmentIncluded(MiniCParser.Var_declContext ctx) { return ctx.getChildCount() == 5; }
 
-    boolean isArrayDeclaration(MiniCParser.Var_declContext ctx) { return ctx.getChildCount() == 6; }
+    private boolean isArrayDeclaration(MiniCParser.Var_declContext ctx) { return ctx.getChildCount() == 6; }
 
     @Override
     public void enterVar_decl(MiniCParser.Var_declContext ctx) {
@@ -104,7 +105,7 @@ public class UcodeGenListener extends MiniCBaseListener {
     public void enterFun_decl(MiniCParser.Fun_declContext ctx) {
         super.enterFun_decl(ctx);
         additionalAssignment[1] = new StringBuilder();
-        varTable[1] = new LinkedHashMap();
+        varTable[1] = new LinkedHashMap<>();
         currentOffset = 1;
         currentBase++;
         isReturnCalled = false;
@@ -145,7 +146,8 @@ public class UcodeGenListener extends MiniCBaseListener {
         super.exitParams(ctx);
     }
 
-    public boolean isArrayParam(MiniCParser.ParamContext ctx) { return ctx.getChildCount() == 4; }
+    private boolean isArrayParam(MiniCParser.ParamContext ctx) { return ctx.getChildCount() == 4; }
+
     @Override
     public void enterParam(MiniCParser.ParamContext ctx) {
         super.enterParam(ctx);
@@ -180,7 +182,7 @@ public class UcodeGenListener extends MiniCBaseListener {
         super.enterExpr_stmt(ctx);
     }
 
-    boolean isOnlyUnaryOperation(MiniCParser.Expr_stmtContext ctx) {
+    private boolean isOnlyUnaryOperation(MiniCParser.Expr_stmtContext ctx) {
         return isUnaryOperation(ctx.expr())
                 && ( UnaryOperation.INC.equals(ctx.expr().getChild(0).getText())
                     || UnaryOperation.DEC.equals(ctx.expr().getChild(0).getText()));
@@ -236,9 +238,9 @@ public class UcodeGenListener extends MiniCBaseListener {
         codeSet.put(ctx, uCode.toString());
     }
 
-    boolean isAssignmentIncluded(MiniCParser.Local_declContext ctx) { return ctx.getChildCount() == 5; }
+    private boolean isAssignmentIncluded(MiniCParser.Local_declContext ctx) { return ctx.getChildCount() == 5; }
 
-    boolean isArrayDeclaration(MiniCParser.Local_declContext ctx) { return ctx.getChildCount() == 6; }
+    private boolean isArrayDeclaration(MiniCParser.Local_declContext ctx) { return ctx.getChildCount() == 6; }
 
     @Override
     public void enterLocal_decl(MiniCParser.Local_declContext ctx) {
@@ -265,7 +267,7 @@ public class UcodeGenListener extends MiniCBaseListener {
     @Override
     public void exitLocal_decl(MiniCParser.Local_declContext ctx) { super.exitLocal_decl(ctx); }
 
-    boolean isElseIncluded(MiniCParser.If_stmtContext ctx) { return ctx.getChildCount() == 7; }
+    private boolean isElseIncluded(MiniCParser.If_stmtContext ctx) { return ctx.getChildCount() == 7; }
 
     @Override
     public void enterIf_stmt(MiniCParser.If_stmtContext ctx) {
@@ -306,7 +308,7 @@ public class UcodeGenListener extends MiniCBaseListener {
         super.enterReturn_stmt(ctx);
     }
 
-    public boolean isValueReturn(MiniCParser.Return_stmtContext ctx) {
+    private boolean isValueReturn(MiniCParser.Return_stmtContext ctx) {
         return ctx.getChildCount() == 3;
     }
 
@@ -331,43 +333,43 @@ public class UcodeGenListener extends MiniCBaseListener {
         super.enterExpr(ctx);
     }
 
-    boolean isBracketedOperand(MiniCParser.ExprContext ctx) {
+    private boolean isBracketedOperand(MiniCParser.ExprContext ctx) {
         return ctx.IDENT() == null && ctx.getChildCount() == 3 && ctx.getChild(1) == ctx.expr(0);
     }
 
-    boolean isIDENT(MiniCParser.ExprContext ctx) {
+    private boolean isIDENT(MiniCParser.ExprContext ctx) {
         return ctx.getChild(0) == ctx.IDENT();
     }
 
-    boolean isLITERAL(MiniCParser.ExprContext ctx) {
+    private boolean isLITERAL(MiniCParser.ExprContext ctx) {
         return ctx.getChild(0) == ctx.LITERAL();
     }
 
-    boolean isOperand(MiniCParser.ExprContext ctx) {
+    private boolean isOperand(MiniCParser.ExprContext ctx) {
         return ctx.getChildCount() == 1;
     }
 
-    boolean isArrayOperand(MiniCParser.ExprContext ctx) {
+    private boolean isArrayOperand(MiniCParser.ExprContext ctx) {
         return ctx.getChildCount() == 4 && ctx.getChild(2) == ctx.expr(0);
     }
 
-    boolean isFunctionCall(MiniCParser.ExprContext ctx) {
+    private boolean isFunctionCall(MiniCParser.ExprContext ctx) {
         return ctx.getChildCount() == 4 && ctx.getChild(2) == ctx.args();
     }
 
-    boolean isUnaryOperation(MiniCParser.ExprContext ctx) {
+    private boolean isUnaryOperation(MiniCParser.ExprContext ctx) {
         return ctx.getChildCount() == 2;
     }
 
-    boolean isBinaryOperation(MiniCParser.ExprContext ctx) {
+    private boolean isBinaryOperation(MiniCParser.ExprContext ctx) {
         return ctx.IDENT() == null && ctx.getChildCount() == 3 && ctx.getChild(1) != ctx.expr(0);
     }
 
-    boolean isAssignment(MiniCParser.ExprContext ctx) {
+    private boolean isAssignment(MiniCParser.ExprContext ctx) {
         return ctx.IDENT() != null && ctx.getChildCount() == 3;
     }
 
-    boolean isArrayAssignment(MiniCParser.ExprContext ctx) {
+    private boolean isArrayAssignment(MiniCParser.ExprContext ctx) {
         return ctx.IDENT() != null && ctx.getChildCount() == 6;
     }
 
@@ -554,17 +556,17 @@ public class UcodeGenListener extends MiniCBaseListener {
 
     class Variable {
         int base, offset, size;
-        public Variable(int base, int offset, int size) {
+        private Variable(int base, int offset, int size) {
             this.base = base;
             this.offset = offset;
             this.size = size;
         }
 
-        public boolean isArrayVariable() {
+        private boolean isArrayVariable() {
             return size != 1;
         }
 
-        public boolean isNeedToLoadAddr() {
+        private boolean isNeedToLoadAddr() {
             return size > 1;
         }
     }
