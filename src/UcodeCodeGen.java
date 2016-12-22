@@ -23,12 +23,18 @@ public class UcodeCodeGen {
 
         ParseTreeWalker walker = new ParseTreeWalker();
         UcodeGenListener generator = new UcodeGenListener();
-        walker.walk(generator, tree);
+        try {
+            walker.walk(generator, tree);
 
-        String fileName = "201102529.uco";
-        try ( BufferedWriter bw = Files.newBufferedWriter(Paths.get(fileName)) ) {
-            bw.write(generator.getUCode());
+            String fileName = "201102529.uco";
+            try (BufferedWriter bw = Files.newBufferedWriter(Paths.get(fileName))) {
+                bw.write(generator.getUCode());
+            }
+            System.out.println("UCode was writed to " + fileName);
+        } catch (Exception e) {
+            e.printStackTrace();
+        } finally {
+            System.out.print(generator.getExceptionDetail());
         }
-        System.out.println("UCode was writed to " + fileName);
     }
 }

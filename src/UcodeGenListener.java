@@ -1,19 +1,24 @@
 /**
  * Created by Hongssang on 2016-11-28.
  */
+import com.sun.xml.internal.bind.annotation.OverrideAnnotationOf;
 import org.antlr.v4.runtime.ParserRuleContext;
 import org.antlr.v4.runtime.tree.ErrorNode;
 import org.antlr.v4.runtime.tree.ParseTreeProperty;
 import org.antlr.v4.runtime.tree.TerminalNode;
 import java.util.LinkedHashMap;
+import java.util.LinkedList;
 import java.util.Map;
+import java.util.Stack;
 
 
 public class UcodeGenListener extends MiniCBaseListener {
     private ParseTreeProperty<String> codeSet = new ParseTreeProperty<>();
-    @SuppressWarnings("unchecked")
     private Map<String, Variable>[] varTable = new LinkedHashMap[2];
-    private StringBuilder[] additionalAssignment = new StringBuilder[2];
+    private Stack<Type> partialAST = new Stack<>();
+    private Map<String, Function> funcTable = new LinkedHashMap<>();
+    private Stack<Function> currentFunction = new Stack<>();
+    private static boolean isReturnCalled = false;
     private static final int INDENT = 11;
     private static final String INDENT_FORMAT = "%-"+INDENT+"s";
     private static int maxGlobalOffset = 2;
@@ -21,11 +26,16 @@ public class UcodeGenListener extends MiniCBaseListener {
     private static int currentOffset = 2; // sym 1 1 은 쓰레기값 저장을 위한 공간(스택포인터를 조작하는 명령어가 없다)
     private static int ifLabelNumber = 1;
     private static int whileLabelNumber = 1;
-    private static boolean isReturnCalled = false;
+    private StringBuilder[] additionalAssignment = new StringBuilder[2];
     private String completeUCode;
+    private StringBuilder exception = new StringBuilder();
 
     protected String getUCode() {
         return completeUCode;
+    }
+
+    protected String getExceptionDetail() {
+        return exception.toString();
     }
 
     @Override
@@ -33,6 +43,10 @@ public class UcodeGenListener extends MiniCBaseListener {
         super.enterProgram(ctx);
         additionalAssignment[0] = new StringBuilder();
         varTable[0] = new LinkedHashMap<>();
+
+        Function temp = new Function("void", "write");
+        temp.addParam(Type.INT);
+        funcTable.put("write", temp);
     }
 
     @Override
@@ -106,6 +120,8 @@ public class UcodeGenListener extends MiniCBaseListener {
         super.enterFun_decl(ctx);
         additionalAssignment[1] = new StringBuilder();
         varTable[1] = new LinkedHashMap<>();
+        currentFunction.push( new Function(ctx.type_spec().getText(), ctx.IDENT().getText()) );
+        funcTable.put(ctx.IDENT().getText(), currentFunction.peek());
         currentOffset = 1;
         currentBase++;
         isReturnCalled = false;
@@ -128,11 +144,15 @@ public class UcodeGenListener extends MiniCBaseListener {
         if (isReturnCalled)
             uCode.append( String.format(INDENT_FORMAT + "end\n", "") );
         else {
+            if(currentFunction.peek().isInt()) {
+                exception.append(currentFunction.peek() + " : return expression doesn't appeared.\n");
+            }
             uCode.append( String.format(INDENT_FORMAT + "ret\n", "") )
                     .append( String.format(INDENT_FORMAT + "end\n", "") );
         }
 
         currentBase--;
+        currentFunction.pop();
         codeSet.put(ctx, uCode.toString());
     }
 
@@ -153,10 +173,13 @@ public class UcodeGenListener extends MiniCBaseListener {
         super.enterParam(ctx);
         String paramName = ctx.IDENT().getText();
 
-        if(isArrayParam(ctx))
+        if(isArrayParam(ctx)) {
             varTable[1].put(paramName, new Variable(currentBase, currentOffset, 0));
-        else
+            currentFunction.peek().addParam(Type.ADDR);
+        } else {
             varTable[1].put(paramName, new Variable(currentBase, currentOffset, 1));
+            currentFunction.peek().addParam(Type.INT);
+        }
 
         currentOffset++;
     }
@@ -197,6 +220,8 @@ public class UcodeGenListener extends MiniCBaseListener {
         if (isOnlyUnaryOperation(ctx))
             uCode.append( String.format(INDENT_FORMAT + "str 1 1\n", "") );
         codeSet.put(ctx, uCode.toString());
+
+        partialAST.pop();
     }
 
     @Override
@@ -210,6 +235,10 @@ public class UcodeGenListener extends MiniCBaseListener {
         StringBuilder uCode = new StringBuilder();
         String condition = codeSet.get(ctx.expr()),
                statement = codeSet.get(ctx.stmt());
+
+        if(!partialAST.peek().equals(Type.INT))
+            exception.append(ctx.expr().getText() + " : " + partialAST.peek() + " cannot be condition.\n");
+        partialAST.pop();
 
         uCode.append( String.format(INDENT_FORMAT + "nop\n", "WLEST" + whileLabelNumber) )
                 .append( condition )
@@ -280,6 +309,10 @@ public class UcodeGenListener extends MiniCBaseListener {
         StringBuilder uCode = new StringBuilder();
         String condition = codeSet.get(ctx.expr());
 
+        if (!partialAST.peek().equals(Type.INT))
+            exception.append(ctx.expr().getText() + " : " + partialAST.peek() + " cannot be condition.\n");
+        partialAST.pop();
+
         if (isElseIncluded(ctx)) {
             String ifStatement = codeSet.get(ctx.stmt(0)),
                    elseStatement = codeSet.get(ctx.stmt(1));
@@ -319,9 +352,16 @@ public class UcodeGenListener extends MiniCBaseListener {
         isReturnCalled = true;
 
         if (isValueReturn(ctx)) {
+            if(currentFunction.peek().isVoid())
+                exception.append(currentFunction.peek() + " : this function doesn't have return type.\n");
+            if(!partialAST.peek().equals(Type.INT))
+                exception.append(ctx.expr().getText() + " : this value is not int type but " + partialAST.peek() + " type.\n");
+            partialAST.pop();
             uCode.append(codeSet.get(ctx.expr()))
                     .append( String.format(INDENT_FORMAT + "retv\n", "") );
         } else {
+            if(currentFunction.peek().isInt())
+                exception.append(currentFunction.peek() + " : this function needs to return value.\n");
             uCode.append( String.format(INDENT_FORMAT + "ret\n", "") );
         }
 
@@ -331,6 +371,11 @@ public class UcodeGenListener extends MiniCBaseListener {
     @Override
     public void enterExpr(MiniCParser.ExprContext ctx) {
         super.enterExpr(ctx);
+        if (isFunctionCall(ctx)) {
+            if ( !funcTable.containsKey(ctx.IDENT().getText()) )
+                exception.append(ctx.IDENT().getText() + " : this function is undefined.\n");
+            currentFunction.push(funcTable.get(ctx.IDENT().getText()));
+        }
     }
 
     private boolean isBracketedOperand(MiniCParser.ExprContext ctx) {
@@ -387,14 +432,20 @@ public class UcodeGenListener extends MiniCBaseListener {
                 Variable operand = varTable[1].get( ctx.getChild(0).getText() );
                 if (operand == null)
                     operand = varTable[0].get( ctx.getChild(0).getText() );
+                if (operand == null)
+                    exception.append(ctx.getChild(0).getText() + " : this variable is undefined.\n");
 
-                if (operand.isNeedToLoadAddr())
-                    uCode.append( String.format(INDENT_FORMAT + "lda %d %d\n", "", operand.base, operand.offset) );
-                else
-                    uCode.append( String.format(INDENT_FORMAT + "lod %d %d\n", "", operand.base, operand.offset) );
+                if (operand.isNeedToLoadAddr()) {
+                    uCode.append(String.format(INDENT_FORMAT + "lda %d %d\n", "", operand.base, operand.offset));
+                    partialAST.push(Type.ADDR);
+                } else {
+                    uCode.append(String.format(INDENT_FORMAT + "lod %d %d\n", "", operand.base, operand.offset));
+                    partialAST.push(Type.INT);
+                }
             } else if (isLITERAL(ctx)) {
                 String operand = ctx.getChild(0).getText();
                 uCode.append( String.format(INDENT_FORMAT + "ldc %s\n", "", operand) );
+                partialAST.push(Type.INT);
             }
         }
 
@@ -402,6 +453,11 @@ public class UcodeGenListener extends MiniCBaseListener {
             Variable arrayId = varTable[1].get( ctx.IDENT().getText() );
             if (arrayId == null)
                 arrayId = varTable[0].get( ctx.getChild(0).getText() );
+            if (arrayId == null)
+                exception.append(ctx.getChild(0).getText() + " : this variable is undefined.\n");
+            if (!partialAST.peek().equals(Type.INT))
+                exception.append(ctx.expr(0).getText() + " : this value must be int type but it's " + partialAST.peek() + " type.\n");
+            partialAST.pop();
 
             String arrayNumber = codeSet.get( ctx.expr(0) );
 
@@ -416,6 +472,8 @@ public class UcodeGenListener extends MiniCBaseListener {
                         .append(String.format(INDENT_FORMAT + "add\n", ""))
                         .append(String.format(INDENT_FORMAT + "ldi\n", ""));
             }
+
+            partialAST.push(Type.INT);
         }
 
         else if (isFunctionCall(ctx)) {
@@ -424,6 +482,9 @@ public class UcodeGenListener extends MiniCBaseListener {
             uCode.append( String.format(INDENT_FORMAT + "ldp\n", "") )
                     .append( args )
                     .append( String.format(INDENT_FORMAT + "call %s\n", "", funcName) );
+
+            partialAST.push( currentFunction.peek().type );
+            currentFunction.pop();
         }
 
         else if (isUnaryOperation(ctx)) {
@@ -435,13 +496,18 @@ public class UcodeGenListener extends MiniCBaseListener {
                 if (u_op.equals(op)) { //일항 연산자의 경우, ++, --의 경우는 출현과 동시에 실제 변수에 영향을 미침
                     uCode.append( String.format(INDENT_FORMAT + u_op, "") );
                     if (u_op.isNeededAssignment()) { //++, -- 일 경우, assign 후 스택에 다시 push
-                        if (ctx.expr(0).IDENT() == null) {
-                            System.out.println("error");
-                            break;
-                        }
+                        if (ctx.expr(0).IDENT() == null)
+                            exception.append(ctx.expr(0) + " : this expression must be modifiable value.\n");
+
                         Variable id = varTable[1].get(ctx.expr(0).IDENT().getText());
                         if (id == null)
                             id = varTable[0].get( ctx.getChild(0).getText() );
+                        if (id == null)
+                            exception.append(ctx.getChild(0).getText() + " : this variable is undefined.\n");
+                        if (!partialAST.peek().equals(Type.INT))
+                            exception.append(ctx.getChild(0).getText() + " : this variable must be int type but it's " + partialAST.peek() +" type.\n");
+                        partialAST.pop();
+
                         if (id.isArrayVariable()) { //array 인자의 ++, -- 연산
                             String arrayNumber = codeSet.get(ctx.expr(0).expr(0));
                             if(id.isNeedToLoadAddr()) { //지역변수 array\ 인자
@@ -467,12 +533,20 @@ public class UcodeGenListener extends MiniCBaseListener {
                     break;
                 }
             }
+            partialAST.push(Type.INT);
         }
 
         else if (isBinaryOperation(ctx)) {
             String op = ctx.getChild(1).getText();
             String operand_1 = codeSet.get(ctx.expr(0)),
                    operand_2 = codeSet.get(ctx.expr(1));
+
+            if (!partialAST.peek().equals(Type.INT))
+                exception.append(ctx.expr(1).getText() + " : this value must be int type but it's " + partialAST.peek() + " type.\n");
+            partialAST.pop();
+            if (!partialAST.peek().equals(Type.INT))
+                exception.append(ctx.expr(0).getText() + " : this value must be int type but it's " + partialAST.peek() + " type.\n");
+            partialAST.pop();
 
             for ( BinaryOperation b_op : BinaryOperation.values() ) {
                 if (b_op.equals(op)) {
@@ -482,25 +556,43 @@ public class UcodeGenListener extends MiniCBaseListener {
                     break;
                 }
             }
+            partialAST.push(Type.INT);
         }
 
         else if (isAssignment(ctx)) {
             Variable id = varTable[1].get( ctx.IDENT().getText() );
             if (id == null)
                 id = varTable[0].get( ctx.getChild(0).getText() );
+            if (id == null)
+                exception.append(ctx.getChild(0).getText() + " : this variable is undefined.\n");
+            if (!partialAST.peek().equals(Type.INT))
+                exception.append(ctx.expr(0).getText() + " : this value must be int type but it's " + partialAST.peek() + " type.\n");
+            partialAST.pop();
+
             String expr = codeSet.get(ctx.expr(0));
             uCode.append( expr )
                     .append( String.format(INDENT_FORMAT + "str %d %d\n", "", id.base, id.offset) );
+
+            partialAST.push(Type.VOID);
         }
 
         else if (isArrayAssignment(ctx)) {
             Variable arrayId = varTable[1].get( ctx.IDENT().getText() );
             if (arrayId == null)
                 arrayId = varTable[0].get( ctx.getChild(0).getText() );
+            if (arrayId == null)
+                exception.append(ctx.getChild(0).getText() + " : this variable is undefined.");
+            if (!partialAST.peek().equals(Type.INT))
+                exception.append(ctx.expr(1).getText() + " : this value must be int type but it's " + partialAST.peek() + " type.\n");
+            partialAST.pop();
+            if (!partialAST.peek().equals(Type.INT))
+                exception.append(ctx.expr(0).getText() + " : this value must be int type but it's " + partialAST.peek() + " type.\n");
+            partialAST.pop();
+
             String arrayNumber = codeSet.get(ctx.expr(0)),
                     expr = codeSet.get(ctx.expr(1));
 
-            if(arrayId.isNeedToLoadAddr()) {
+            if (arrayId.isNeedToLoadAddr()) {
                 uCode.append(arrayNumber)
                         .append( String.format(INDENT_FORMAT + "lda %d %d\n", "", arrayId.base, arrayId.offset) )
                         .append( String.format(INDENT_FORMAT + "add\n", "") )
@@ -513,6 +605,7 @@ public class UcodeGenListener extends MiniCBaseListener {
                         .append( expr )
                         .append( String.format(INDENT_FORMAT + "sti\n", "") );
             }
+            partialAST.push(Type.VOID);
         }
 
         codeSet.put(ctx, uCode.toString());
@@ -527,6 +620,15 @@ public class UcodeGenListener extends MiniCBaseListener {
     public void exitArgs(MiniCParser.ArgsContext ctx) {
         super.exitArgs(ctx);
         StringBuilder uCode = new StringBuilder();
+
+        if (currentFunction.peek().parameterSize() != ctx.expr().size())
+            exception.append(ctx.getText() + " : arguments' size is unequal.\n");
+        for (int i = currentFunction.peek().params.size() - 1; i >= 0; i--) {
+            if(!currentFunction.peek().params.get(i).equals( partialAST.peek()) ) {
+                exception.append(ctx.expr(i).getText() + " : this value must be " + currentFunction.peek().params.get(i) + " but it's " + partialAST.peek() + " type.\n");
+            }
+            partialAST.pop();
+        }
 
         for ( MiniCParser.ExprContext exprChild : ctx.expr() )
             uCode.append( codeSet.get(exprChild) );
@@ -569,6 +671,44 @@ public class UcodeGenListener extends MiniCBaseListener {
         private boolean isNeedToLoadAddr() {
             return size > 1;
         }
+    }
+
+    class Function {
+        private String name;
+        private Type type;
+        private LinkedList<Type> params;
+
+        public Function(String type, String name) {
+            if("int".equals(type))
+                this.type = Type.INT;
+            else if("void".equals(type))
+                this.type = Type.VOID;
+            params = new LinkedList<>();
+            this.name = name;
+        }
+
+        public void addParam(Type type) {
+            params.addLast(type);
+        }
+
+        public int parameterSize() { return params.size(); }
+
+        public boolean isInt() { return type.equals(Type.INT); }
+
+        public boolean isVoid() { return type.equals(Type.VOID); }
+
+        @Override
+        public String toString() { return name; }
+    }
+
+    enum Type {
+        INT("int"),
+        ADDR("address"),
+        VOID("void");
+
+        private final String typeName;
+        Type(String typeName) { this.typeName = typeName; }
+        @Override public String toString() { return typeName;}
     }
 
     enum BinaryOperation {
